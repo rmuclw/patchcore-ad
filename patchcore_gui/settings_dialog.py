@@ -48,7 +48,7 @@ class TrainingSettings:
 class SettingsDialog(QDialog):
     def __init__(self, initial: TrainingSettings | None = None, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Глубокие настройки обучения")
+        self.setWindowTitle("Настройки формирования эталонного банка памяти")
         self.setModal(True)
         self.resize(760, 520)
         self._initial = initial or TrainingSettings()
@@ -148,7 +148,7 @@ class SettingsDialog(QDialog):
         page = QWidget(self)
         root = QVBoxLayout(page)
 
-        self.radio_3sigma = QRadioButton("Авто-порог по правилу 3-х сигм (по train данным)", page)
+        self.radio_3sigma = QRadioButton("Авто-порог по правилу 3-х сигм (по эталонным данным)", page)
         self.radio_f1 = QRadioButton("F1-оптимальный порог (требуется валидационный датасет)", page)
         self.radio_3sigma.setChecked(True)
         self.radio_3sigma.setStyleSheet(
@@ -208,7 +208,7 @@ class SettingsDialog(QDialog):
 
     def _build_metrics_tab(self) -> QWidget:
         """
-        Вкладка настройки вычисления метрик после обучения.
+        Вкладка настройки вычисления метрик после формирования банка.
         Image AUROC — всегда. Pixel AUROC и PRO — только с GT-масками.
         """
         page = QWidget(self)
@@ -371,6 +371,31 @@ class SettingsDialog(QDialog):
             None if self._metrics_mask_label.text() == "Не выбрано"
             else self._metrics_mask_label.text() or None
         )
+
+        # Валидация папки метрик: структура должна совпадать с validation (good + дефекты)
+        if metrics_val is not None:
+            if not self._validate_f1_dirs(metrics_val):
+                QMessageBox.warning(
+                    self,
+                    "Оценка качества — Validation",
+                    "Папка Validation для метрик должна содержать подпапку 'good' "
+                    "и хотя бы одну папку с дефектами.\n\n"
+                    "Ожидаемая структура:\n"
+                    "  <папка>/good/*.png\n"
+                    "  <папка>/<дефект>/*.png",
+                )
+                return
+
+        # Валидация папки GT-масок: должна существовать и быть директорией
+        if metrics_mask is not None:
+            if not Path(metrics_mask).is_dir():
+                QMessageBox.warning(
+                    self,
+                    "Оценка качества — GT-маски",
+                    f"Папка GT-масок не найдена:\n{metrics_mask}\n\n"
+                    "Убедитесь, что путь указан верно.",
+                )
+                return
 
         self._settings = TrainingSettings(
             backbone_name=self._backbone_combo.currentText(),

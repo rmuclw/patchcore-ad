@@ -1,5 +1,5 @@
 """
-Фоновые потоки для загрузки весов и инференса PatchCore без блокировки GUI.
+Фоновые потоки для загрузки банка памяти и инференса PatchCore без блокировки GUI.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from patchcore_gui.settings_dialog import TrainingSettings
 
 
 def normalize_score(raw_score: float, score_min: float, score_max: float) -> float:
-    """Линейно нормирует скор в [0, 1] по диапазону модели."""
+    """Линейно нормирует скор в [0, 1] по диапазону банка памяти."""
     denom = score_max - score_min
     if denom <= 1e-12:
         return 0.0
@@ -32,7 +32,7 @@ class ModelLoadWorker(QThread):
     """
     Однократная загрузка чекпоинта в объекте PatchCore (в отдельном потоке).
 
-    После успешной загрузки объект модели можно передавать в InferenceWorker
+    После успешной загрузки объект банка памяти можно передавать в InferenceWorker
     только если дальнейшее использование будет в том же потоке — поэтому здесь
     мы только проверяем, что файл читается, и эмитим метаданные.
 
@@ -67,7 +67,7 @@ class ModelLoadWorker(QThread):
 
 class InferenceWorker(QThread):
     """
-    Очередь инференса: модель создаётся и используется только в этом QThread.
+    Очередь инференса: банк памяти создаётся и используется только в этом QThread.
 
     В главный поток уходят сырое значение скора, нормализованный скор [0,1],
     карта аномалий и время; ошибки — отдельным сигналом.
@@ -133,7 +133,8 @@ class InferenceWorker(QThread):
 
 class TrainingWorker(QThread):
     """
-    Полный цикл обучения PatchCore в фоновом потоке: fit - compute_score_range - save.
+    Полный цикл формирования эталонного банка памяти PatchCore в фоновом потоке:
+    fit → compute_score_range → save.
 
     Папка ``train_image_dir`` должна содержать только изображения нормального класса
     (эталоны без дефектов) — по ним строится банк памяти и статистика порога.
@@ -144,6 +145,10 @@ class TrainingWorker(QThread):
     training_success = pyqtSignal(float, float, float, dict)
     training_finished = pyqtSignal()
     training_failed = pyqtSignal(str)
+    # Некритичное предупреждение: банк сформирован, но что-то пошло не так с метриками/масками
+    training_warning = pyqtSignal(str)
+    # Пользователь нажал «Отмена» — банк не сохранён
+    training_cancelled = pyqtSignal()
 
     def __init__(
         self,
@@ -162,6 +167,14 @@ class TrainingWorker(QThread):
         self._settings = settings
         self._metrics_val_dir = metrics_val_dir
         self._metrics_mask_dir = metrics_mask_dir
+        self._cancel_requested: bool = False
+
+    def request_cancel(self) -> None:
+        """Безопасная отмена: поднимает флаг, поток завершится на ближайшей точке проверки."""
+        self._cancel_requested = True
+
+    def _should_stop(self) -> bool:
+        return self._cancel_requested
 
     def run(self) -> None:
         self.training_started.emit()
@@ -183,8 +196,16 @@ class TrainingWorker(QThread):
                 patch_size=self._settings.patch_size,
                 use_gpu_faiss=self._settings.use_gpu_faiss,
             )
-            model.fit(self._train_image_dir)
-            model.compute_score_range(self._train_image_dir)
+            model.fit(self._train_image_dir, should_stop=self._should_stop)
+
+            if self._should_stop():
+                raise InterruptedError("Формирование банка отменено пользователем.")
+
+            model.compute_score_range(self._train_image_dir, should_stop=self._should_stop)
+
+            if self._should_stop():
+                raise InterruptedError("Формирование банка отменено пользователем.")
+
             if self._settings.threshold_mode == "f1_optimal":
                 self._apply_f1_threshold(model=model)
 
@@ -195,13 +216,23 @@ class TrainingWorker(QThread):
                     metrics_dict = self._compute_metrics(model)
                     model.save_metrics(metrics_dict)
                 except Exception as exc:  # noqa: BLE001
-                    print(f"[TrainingWorker] Не удалось вычислить метрики: {exc}")
+                    msg = str(exc)
+                    print(f"[TrainingWorker] Не удалось вычислить метрики: {msg}")
+                    self.training_warning.emit(
+                        f"Эталонный банк памяти сформирован успешно, однако вычислить "
+                        f"метрики качества не удалось:\n\n{msg}\n\n"
+                        f"Проверьте структуру папки Validation (должны быть подпапки "
+                        f"'good' и папки с дефектами) и при необходимости — папку GT-масок."
+                    )
 
             model.save(self._save_path)
             thr = float(model.threshold)
             smin = float(model.score_min)
             smax = float(model.score_max)
             self.training_success.emit(thr, smin, smax, metrics_dict)
+        except InterruptedError:
+            print("[TrainingWorker] Формирование банка отменено пользователем.")
+            self.training_cancelled.emit()
         except Exception as exc:  # noqa: BLE001
             self.training_failed.emit(str(exc))
         else:
@@ -254,7 +285,7 @@ class TrainingWorker(QThread):
 
     def _compute_metrics(self, model: "PatchCore") -> dict:
         """
-        Прогоняет validation-данные через модель и вычисляет метрики.
+        Прогоняет validation-данные через банк памяти и вычисляет метрики.
         Image AUROC всегда. Pixel AUROC и PRO — только если есть GT-маски.
         """
         from patchcore.metrics import Metrics
@@ -284,6 +315,16 @@ class TrainingWorker(QThread):
         gt_masks_arr = None
         maps_arr = None
         has_masks = any(m is not None for m in val_masks)
+
+        # Если папка масок была указана, но ни одна маска не нашлась по пути
+        # category/stem* — предупреждаем: пиксельные метрики считаться не будут.
+        if self._metrics_mask_dir and not has_masks:
+            raise ValueError(
+                f"Папка GT-масок указана ({self._metrics_mask_dir}), но ни одна маска "
+                f"не найдена. Ожидаемая структура: <папка_масок>/<категория>/<имя_файла>.*  "
+                f"(например: masks/crack/001.png). Pixel AUROC и PRO Score не будут вычислены."
+            )
+
         if has_masks:
             gt_list = []
             map_list = []

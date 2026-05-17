@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressBar,
     QProgressDialog,
     QPushButton,
     QSlider,
@@ -125,15 +126,15 @@ class _StdoutRedirector:
         raise OSError("fileno not supported on redirected stream")
 
 
-class ModelInfoDialog(QDialog):
+class BankInfoDialog(QDialog):
     """
-    Диалог просмотра параметров обученной модели PatchCore, считанных из .pt файла.
+    Диалог просмотра параметров эталонного банка памяти PatchCore, считанных из .pt файла.
     Отображает все метаданные, сохранённые в state dict через PatchCore.save().
     """
 
     def __init__(self, state: dict, model_path: str, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Параметры модели")
+        self.setWindowTitle("Параметры банка памяти")
         self.setModal(True)
         self.resize(520, 480)
         self._build_ui(state, model_path)
@@ -158,7 +159,7 @@ class ModelInfoDialog(QDialog):
         table.setSelectionBehavior(table.SelectionBehavior.SelectRows)
         table.setAlternatingRowColors(True)
 
-        rows = ModelInfoDialog._build_rows(state)
+        rows = BankInfoDialog._build_rows(state)
         table.setRowCount(len(rows))
         section_font = QFont()
         section_font.setBold(True)
@@ -189,7 +190,7 @@ class ModelInfoDialog(QDialog):
 
     @staticmethod
     def _build_rows(state: dict) -> list[tuple[str, str]]:
-        """Формирует список (параметр, значение) из state dict модели."""
+        """Формирует список (параметр, значение) из state dict банка памяти."""
         rows: list[tuple[str, str]] = []
 
         # Architecture
@@ -218,7 +219,7 @@ class ModelInfoDialog(QDialog):
         rows.append(("threshold", f"{float(state['threshold']):.6f}" if "threshold" in state else "—"))
 
         # Hyperparams
-        rows.append(("── Гиперпараметры обучения ──", ""))
+        rows.append(("── Гиперпараметры ──", ""))
         rows.append(("n_reweight_nn", str(state.get("n_reweight_nn", "—"))))
         rows.append(("gaussian_sigma", str(state.get("gaussian_sigma", "—"))))
 
@@ -237,9 +238,9 @@ class ModelInfoDialog(QDialog):
 
 
 
-class TrainingResultDialog(QDialog):
+class BankFormationResultDialog(QDialog):
     """
-    Диалог результатов обучения: параметры модели + метрики + ROC-кривые.
+    Диалог результатов формирования банка: параметры + метрики + ROC-кривые.
     Показывается сразу после успешного завершения TrainingWorker.
     """
 
@@ -253,7 +254,7 @@ class TrainingResultDialog(QDialog):
         parent=None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Обучение завершено")
+        self.setWindowTitle("Формирование банка завершено")
         self.setModal(True)
         self.resize(640, 520)
         self._metrics = metrics
@@ -271,7 +272,7 @@ class TrainingResultDialog(QDialog):
         root.setSpacing(8)
 
         # Header
-        header = QLabel(f"<b>Модель сохранена:</b> {save_path}")
+        header = QLabel(f"<b>Эталонный банк памяти сохранён:</b> {save_path}")
         header.setWordWrap(True)
         header.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         root.addWidget(header)
@@ -421,7 +422,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, device_preference: str = "auto") -> None:
         super().__init__()
-        self.setWindowTitle("PatchCore — визуальный контроль качества")
+        self.setWindowTitle("PatchCoreApp — визуальный контроль качества")
         self.resize(1280, 800)
 
         self._device_pref = device_preference
@@ -437,7 +438,7 @@ class MainWindow(QMainWindow):
         self._preload_worker: Optional[InferenceWorker] = None
         self._preload_model_path: str = ""
         self._training_worker: Optional[TrainingWorker] = None
-        self._training_progress: Optional[QProgressDialog] = None
+        self._training_progress: Optional[QDialog] = None
         self._training_busy: bool = False
         self._score_min: float = 0.0
         self._score_max: float = 1.0
@@ -523,16 +524,16 @@ class MainWindow(QMainWindow):
         return row
 
     def _build_left_column(self) -> QTabWidget:
-        """Один навигатор: у оператора полоска вкладок скрыта, у инженера — Инференс / Обучение."""
+        """Один навигатор: у оператора полоска вкладок скрыта, у инженера — Инференс / Формирование банка."""
         self._left_tabs = QTabWidget()
         self._left_tabs.addTab(self._build_inference_tab(), "Инференс")
-        self._left_tabs.addTab(self._build_training_tab(), "Обучение (Fit)")
+        self._left_tabs.addTab(self._build_training_tab(), "Формирование банка (Fit)")
         self._left_tabs.tabBar().setVisible(False)
         return self._left_tabs
 
     def _build_inference_tab(self) -> QFrame:
         frame, lay = self._frame("Управление")
-        self._model_label = QLabel("Модель: не выбрана")
+        self._model_label = QLabel("Эталонный банк памяти: не выбран")
         self._model_label.setWordWrap(True)
         self._btn_choose_model = QPushButton("Обзор… (.pt)")
         self._btn_choose_model.clicked.connect(self._choose_model)
@@ -549,7 +550,7 @@ class MainWindow(QMainWindow):
         self._btn_start.setProperty("role", "start")
         self._btn_stop.setProperty("role", "stop")
 
-        self._btn_model_info = QPushButton("ℹ Параметры модели")
+        self._btn_model_info = QPushButton("Параметры банка памяти")
         self._btn_model_info.clicked.connect(self._show_model_info)
         self._btn_model_info.setEnabled(False)
 
@@ -564,10 +565,10 @@ class MainWindow(QMainWindow):
         return frame
 
     def _build_training_tab(self) -> QFrame:
-        frame, lay = self._frame("Обучение модели (Fit)")
+        frame, lay = self._frame("Формирование эталонного банка памяти (Fit)")
         note = QLabel(
             "Используйте только изображения нормального класса (без дефектов). "
-            "Алгоритм строит банк памяти исключительно из эталонов."
+            "Алгоритм строит эталонный банк памяти исключительно из эталонов."
         )
         note.setWordWrap(True)
         note.setProperty("role", "hint")
@@ -578,15 +579,15 @@ class MainWindow(QMainWindow):
         self._btn_choose_train_dir = QPushButton("Выбрать папку с НОРМОЙ")
         self._btn_choose_train_dir.clicked.connect(self._choose_train_dir)
 
-        self._train_save_label = QLabel("Файл модели: не выбран")
+        self._train_save_label = QLabel("Файл банка: не выбран")
         self._train_save_label.setWordWrap(True)
-        self._btn_save_model_as = QPushButton("Сохранить модель как…")
+        self._btn_save_model_as = QPushButton("Сохранить банк как…")
         self._btn_save_model_as.clicked.connect(self._choose_train_save_path)
 
-        self._btn_train = QPushButton("ОБУЧИТЬ")
+        self._btn_train = QPushButton("СФОРМИРОВАТЬ БАНК")
         self._btn_train.setProperty("role", "train")
         self._btn_train.clicked.connect(self._start_training)
-        self._btn_training_settings = QPushButton("Настройки обучения")
+        self._btn_training_settings = QPushButton("Настройки формирования банка")
         self._btn_training_settings.clicked.connect(self._open_training_settings)
 
         lay.addWidget(self._train_dir_label)
@@ -643,7 +644,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(self._score_value)
         lay.addWidget(self._time_value)
 
-        self._threshold_auto_check = QCheckBox("Автоматический порог (из модели)")
+        self._threshold_auto_check = QCheckBox("Автоматический порог (из банка памяти)")
         self._threshold_auto_check.setChecked(True)
         self._threshold_auto_check.toggled.connect(self._on_auto_threshold_toggled)
         lay.addWidget(self._threshold_auto_check)
@@ -657,13 +658,13 @@ class MainWindow(QMainWindow):
         self._threshold_spinbox.setValue(0.5)
         self._threshold_spinbox.setEnabled(False)
         self._threshold_spinbox.setToolTip(
-            "Сырое значение порога в единицах L2-расстояния модели.\n"
+            "Сырое значение порога в единицах L2-расстояния.\n"
             "Используйте стрелки (шаг 0.0001) или введите значение вручную."
         )
         self._threshold_spinbox.valueChanged.connect(self._on_threshold_changed)
         lay.addWidget(self._threshold_spinbox)
 
-        self._threshold_caption = QLabel("Порог: — (выберите модель .pt)")
+        self._threshold_caption = QLabel("Порог: — (выберите файл банка .pt)")
         self._threshold_caption.setProperty("role", "hint")
         lay.addWidget(self._threshold_caption)
         lay.addStretch()
@@ -805,13 +806,13 @@ class MainWindow(QMainWindow):
             self._left_tabs.setCurrentIndex(0)
 
     def _current_threshold_raw(self) -> float:
-        """Активный порог в сырой шкале скоров модели."""
+        """Активный порог в сырой шкале скоров."""
         if self._threshold_auto_check.isChecked():
             return float(self._model_auto_threshold_raw)
         return float(self._threshold_spinbox.value())
 
     def _sync_threshold_ui_from_metadata(self) -> None:
-        """Обновляет SpinBox и подпись после загрузки модели / обучения / model_ready."""
+        """Обновляет SpinBox и подпись после загрузки банка / формирования / model_ready."""
         # Подстраиваем шаг под масштаб диапазона — удобнее крутить стрелками
         span = self._score_max - self._score_min
         if span > 0:
@@ -829,7 +830,7 @@ class MainWindow(QMainWindow):
             self._threshold_spinbox.setValue(self._model_auto_threshold_raw)
             self._threshold_spinbox.blockSignals(False)
             self._threshold_caption.setText(
-                f"Авто (из модели): {self._model_auto_threshold_raw:.4f}"
+                f"Авто (из банка памяти): {self._model_auto_threshold_raw:.4f}"
             )
         else:
             self._refresh_threshold_caption_manual()
@@ -906,7 +907,7 @@ class MainWindow(QMainWindow):
         self._refresh_verdict()
 
     def _set_training_locked(self, locked: bool) -> None:
-        """Блокирует UI на время обучения (кроме закрытия окна)."""
+        """Блокирует UI на время формирования банка (кроме закрытия окна)."""
         self._training_busy = locked
         if locked:
             self._role_combo.setEnabled(False)
@@ -936,13 +937,48 @@ class MainWindow(QMainWindow):
             self._btn_start.setEnabled(not self._running)
 
     def _open_training_progress(self) -> None:
-        dlg = QProgressDialog(self)
-        dlg.setLabelText("Идёт обучение…")
-        dlg.setWindowTitle("Обучение PatchCore")
-        dlg.setRange(0, 0)
-        dlg.setCancelButton(None)
-        dlg.setMinimumDuration(0)
+        from PyQt6.QtWidgets import QDialogButtonBox
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Формирование банка памяти PatchCore")
         dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
+        dlg.setMinimumWidth(380)
+        # Запрещаем закрытие крестиком — только через кнопку «Отмена»
+        dlg.setWindowFlags(
+            dlg.windowFlags() & ~Qt.WindowType.WindowCloseButtonHint
+        )
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(16)
+        layout.setContentsMargins(20, 20, 20, 16)
+
+        lbl = QLabel("Идёт формирование эталонного банка памяти…")
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(lbl)
+
+        bar = QProgressBar()
+        bar.setRange(0, 0)   # indeterminate (анимированная полоса)
+        bar.setTextVisible(False)
+        layout.addWidget(bar)
+
+        btn_cancel = QPushButton("Отмена")
+        btn_cancel.setProperty("role", "stop")
+        btn_cancel.setFixedHeight(32)
+
+        def _on_cancel() -> None:
+            lbl.setText("Отмена… ожидание завершения текущего шага…")
+            btn_cancel.setEnabled(False)
+            if self._training_worker is not None:
+                self._training_worker.request_cancel()
+
+        btn_cancel.clicked.connect(_on_cancel)
+
+        btn_box = QHBoxLayout()
+        btn_box.addStretch()
+        btn_box.addWidget(btn_cancel)
+        btn_box.addStretch()
+        layout.addLayout(btn_box)
+
         dlg.show()
         self._training_progress = dlg
 
@@ -958,7 +994,7 @@ class MainWindow(QMainWindow):
             QTableWidgetItem(datetime.now().strftime("%H:%M:%S")),
             QTableWidgetItem("—"),
             QTableWidgetItem("—"),
-            QTableWidgetItem("Идёт обучение…"),
+            QTableWidgetItem("Идёт формирование банка…"),
         ]
         for col, it in enumerate(items):
             it.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -968,7 +1004,7 @@ class MainWindow(QMainWindow):
         self._log_table.insertRow(0)
         items = [
             QTableWidgetItem(datetime.now().strftime("%H:%M:%S")),
-            QTableWidgetItem("ОБУЧЕНИЕ ЗАВЕРШЕНО"),
+            QTableWidgetItem("ФОРМИРОВАНИЕ БАНКА ЗАВЕРШЕНО"),
             QTableWidgetItem(f"{threshold:.6f}"),
             QTableWidgetItem("УСПЕХ"),
         ]
@@ -988,7 +1024,7 @@ class MainWindow(QMainWindow):
     def _choose_train_save_path(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Сохранить обученную модель",
+            "Сохранить эталонный банк памяти",
             "",
             "PyTorch (*.pt)",
         )
@@ -996,7 +1032,7 @@ class MainWindow(QMainWindow):
             if not path.lower().endswith(".pt"):
                 path += ".pt"
             self._train_save_path = path
-            self._train_save_label.setText(f"Файл модели:\n{path}")
+            self._train_save_label.setText(f"Файл банка:\n{path}")
 
     def _start_training(self) -> None:
         if self._training_busy:
@@ -1005,7 +1041,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Конвейер активен",
-                "Остановите конвейер перед запуском обучения.",
+                "Остановите конвейер перед запуском формирования банка.",
             )
             return
         if not self._train_image_dir:
@@ -1025,15 +1061,17 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Validation",
-                "Для F1-оптимального порога сначала укажите папку Validation в настройках обучения.",
+                "Для F1-оптимального порога сначала укажите папку Validation в настройках формирования банка.",
             )
             return
-        train_files = list_image_paths(self._train_image_dir)
+        train_files = list_image_paths(self._train_image_dir, recursive=True)
         if not train_files:
             QMessageBox.warning(
                 self,
                 "Пустая папка",
-                "В выбранной папке нет поддерживаемых изображений.",
+                "В выбранной папке (включая вложенные подпапки) не найдено "
+                "поддерживаемых изображений.\n\n"
+                "Поддерживаемые форматы: JPEG, PNG, BMP, TIFF, WebP.",
             )
             return
 
@@ -1052,6 +1090,8 @@ class MainWindow(QMainWindow):
         )
         self._training_worker.training_success.connect(self._on_training_success)
         self._training_worker.training_failed.connect(self._on_training_failed)
+        self._training_worker.training_warning.connect(self._on_training_warning)
+        self._training_worker.training_cancelled.connect(self._on_training_cancelled)
         self._training_worker.finished.connect(self._on_training_worker_finished)
         self._training_worker.start()
 
@@ -1076,7 +1116,7 @@ class MainWindow(QMainWindow):
         self._score_max = float(score_max)
         self._sync_threshold_ui_from_metadata()
         self._append_training_success_log(threshold)
-        dlg = TrainingResultDialog(
+        dlg = BankFormationResultDialog(
             threshold=threshold,
             score_min=score_min,
             score_max=score_max,
@@ -1089,13 +1129,34 @@ class MainWindow(QMainWindow):
     def _on_training_failed(self, message: str) -> None:
         self._close_training_progress()
         self._set_training_locked(False)
-        QMessageBox.critical(self, "Ошибка обучения", message)
+        QMessageBox.critical(self, "Ошибка формирования банка", message)
+
+    def _on_training_cancelled(self) -> None:
+        """Пользователь нажал «Отмена» — банк не сохранён, UI разблокируется."""
+        self._close_training_progress()
+        self._set_training_locked(False)
+        # Убираем строку «Идёт формирование…» из журнала (она была первой строкой)
+        if self._log_table.rowCount() > 0:
+            first_status = self._log_table.item(0, 3)
+            if first_status and "формирование" in first_status.text().lower():
+                self._log_table.removeRow(0)
+        self._append_log_row("—", 0.0, "ОТМЕНЕНО")
+        QMessageBox.information(
+            self,
+            "Формирование банка",
+            "Формирование эталонного банка памяти отменено.\n"
+            "Файл банка не был сохранён.",
+        )
+
+    def _on_training_warning(self, message: str) -> None:
+        """Некритичное предупреждение: банк сформирован, но метрики не посчитались."""
+        QMessageBox.warning(self, "Предупреждение — оценка качества", message)
 
     def _on_training_worker_finished(self) -> None:
         self._training_worker = None
 
     def _choose_model(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Выбор модели", "", "PyTorch (*.pt)")
+        path, _ = QFileDialog.getOpenFileName(self, "Выбор файла банка памяти", "", "PyTorch (*.pt)")
         if not path:
             return
         try:
@@ -1108,13 +1169,13 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(
                 self,
-                "Файл модели",
+                "Файл банка памяти",
                 f"Не удалось прочитать метаданные:\n{path}\n\n{exc}",
             )
             return
         self._model_path = path
         self._model_state = state
-        self._model_label.setText(f"Модель:\n{path}")
+        self._model_label.setText(f"Эталонный банк памяти:\n{path}")
         self._btn_model_info.setEnabled(True)
         self._sync_threshold_ui_from_metadata()
         self._start_preload_worker(path)
@@ -1122,7 +1183,7 @@ class MainWindow(QMainWindow):
     def _show_model_info(self) -> None:
         if self._model_state is None:
             return
-        dlg = ModelInfoDialog(self._model_state, self._model_path, self)
+        dlg = BankInfoDialog(self._model_state, self._model_path, self)
         dlg.exec()
 
     def _choose_folder(self) -> None:
@@ -1137,19 +1198,19 @@ class MainWindow(QMainWindow):
         if self._training_busy:
             QMessageBox.warning(
                 self,
-                "Обучение",
-                "Дождитесь завершения обучения перед запуском конвейера.",
+                "Формирование банка",
+                "Дождитесь завершения формирования банка перед запуском конвейера.",
             )
             return
         if not self._model_path:
-            QMessageBox.warning(self, "Нет модели", "Укажите файл весов .pt.")
+            QMessageBox.warning(self, "Нет банка памяти", "Укажите файл эталонного банка памяти .pt.")
             return
         if not self._image_dir:
             QMessageBox.warning(self, "Нет папки", "Укажите папку с изображениями.")
             return
-        paths = list_image_paths(self._image_dir)
+        paths = list_image_paths(self._image_dir, recursive=False)
         if not paths:
-            QMessageBox.warning(self, "Пусто", "В папке нет поддерживаемых изображений.")
+            QMessageBox.warning(self, "Пусто", "В папке нет поддерживаемых изображений.\n\nПоддерживаемые форматы: JPEG, PNG, BMP, TIFF, WebP.")
             return
         self._image_paths = paths
         self._conveyor_index = 0
@@ -1168,7 +1229,7 @@ class MainWindow(QMainWindow):
             and self._preload_worker.isRunning()
             and self._preload_model_path == self._model_path
         ):
-            # Берём предзагрузочный воркер — модель уже загружается или загружена
+            # Берём предзагрузочный воркер — банк уже загружается или загружен
             self._worker = self._preload_worker
             self._preload_worker = None
             self._preload_model_path = ""
@@ -1176,7 +1237,7 @@ class MainWindow(QMainWindow):
             self._worker.inference_failed.connect(self._on_inference_failed)
             self._worker.finished.connect(self._on_worker_finished)
             if self._worker.is_model_loaded:
-                # Модель уже готова — немедленно стартуем конвейер
+                # Банк уже готов — немедленно стартуем конвейер
                 self._on_timer_tick()
                 self._timer.start()
             # Иначе _on_model_ready придёт чуть позже и запустит таймер
@@ -1193,7 +1254,7 @@ class MainWindow(QMainWindow):
             # Таймер запустится в _on_model_ready
 
     def _start_preload_worker(self, model_path: str) -> None:
-        """Запускает фоновую загрузку модели сразу при её выборе."""
+        """Запускает фоновую загрузку банка памяти сразу при его выборе."""
         self._discard_preload_worker()
         device = select_device(self._device_pref)
         w = InferenceWorker(model_path, device)
@@ -1202,7 +1263,7 @@ class MainWindow(QMainWindow):
         self._preload_worker = w
         self._preload_model_path = model_path
         w.start()
-        print(f"[Preload] Фоновая загрузка модели: {model_path}")
+        print(f"[Preload] Фоновая загрузка банка памяти: {model_path}")
 
     def _discard_preload_worker(self) -> None:
         """Останавливает и удаляет предзагрузочный воркер."""
@@ -1415,17 +1476,17 @@ class MainWindow(QMainWindow):
 
         self._train_save_path = settings.value("train_save_path", "", type=str)
         if self._train_save_path:
-            self._train_save_label.setText(f"Файл модели:\n{self._train_save_path}")
+            self._train_save_label.setText(f"Файл банка:\n{self._train_save_path}")
 
-        # 4. Восстанавливаем модель только если файл всё ещё существует на диске
+        # 4. Восстанавливаем банк памяти только если файл всё ещё существует на диске
         saved_model = settings.value("model_path", "", type=str)
         if saved_model and Path(saved_model).is_file():
             self._model_path = saved_model
-            self._model_label.setText(f"Модель:\n{self._model_path}")
+            self._model_label.setText(f"Эталонный банк памяти:\n{self._model_path}")
             self._try_restore_model_metadata(self._model_path)
 
     def _try_restore_model_metadata(self, path: str) -> None:
-        """Тихо подгружает метаданные из сохраненного файла без блокировки."""
+        """Тихо подгружает метаданные из сохранённого файла без блокировки."""
         try:
             state = torch.load(path, map_location="cpu", weights_only=True)
             if isinstance(state, dict):
@@ -1437,10 +1498,10 @@ class MainWindow(QMainWindow):
                 self._sync_threshold_ui_from_metadata()
                 self._start_preload_worker(path)
         except Exception as e:
-            print(f"[UI State] Не удалось восстановить метаданные модели: {e}")
+            print(f"[UI State] Не удалось восстановить метаданные банка памяти: {e}")
 
     def _export_to_excel(self) -> None:
-        """Собирает параметры модели, результаты инференса и метрики качества в Excel."""
+        """Собирает параметры банка памяти, результаты инференса и метрики качества в Excel."""
         if not self._history:
             QMessageBox.warning(self, "Пусто", "Нет данных для экспорта. Сначала запустите конвейер.")
             return
@@ -1468,9 +1529,9 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            # --- 1. Лист: Параметры модели ---
+            # --- 1. Лист: Параметры банка памяти ---
             model_info = {
-                "Параметр": ["Путь к модели"],
+                "Параметр": ["Путь к файлу банка"],
                 "Значение": [self._model_path]
             }
             if self._model_state:
@@ -1482,7 +1543,7 @@ class MainWindow(QMainWindow):
                         model_info["Значение"].append(str(v))
             df_model = pd.DataFrame(model_info)
 
-            # --- 2. Лист: Метрики качества (НОВОЕ) ---
+            # --- 2. Лист: Метрики качества ---
             metrics_data = {"Показатель": [], "Значение": []}
             if self._model_state and "metrics" in self._model_state:
                 m = self._model_state["metrics"]
@@ -1499,7 +1560,7 @@ class MainWindow(QMainWindow):
                         metrics_data["Показатель"].append(label)
                         metrics_data["Значение"].append(round(float(m[key]), 4))
 
-            # Если метрик нет (модель не валидировалась), добавим пояснение
+            # Если метрик нет (банк не валидировался), добавим пояснение
             if not metrics_data["Показатель"]:
                 metrics_data["Показатель"].append("Статус")
                 metrics_data["Значение"].append("Метрики не рассчитывались")
@@ -1528,7 +1589,7 @@ class MainWindow(QMainWindow):
 
             # --- Запись в файл ---
             with pd.ExcelWriter(path, engine='openpyxl') as writer:
-                df_model.to_excel(writer, sheet_name="Параметры модели", index=False)
+                df_model.to_excel(writer, sheet_name="Параметры банка памяти", index=False)
                 df_metrics.to_excel(writer, sheet_name="Метрики качества", index=False)
                 df_results.to_excel(writer, sheet_name="Результаты", index=False)
 
